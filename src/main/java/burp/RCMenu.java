@@ -8,9 +8,13 @@ import java.awt.datatransfer.StringSelection;
 import java.awt.datatransfer.Clipboard;
 import java.awt.Toolkit;
 import javax.swing.*;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.zip.DeflaterOutputStream;
+import java.util.zip.InflaterOutputStream;
 
 import org.json.JSONObject;
 
@@ -20,6 +24,22 @@ import org.json.JSONObject;
 public class RCMenu implements IContextMenuFactory {
     final private IExtensionHelpers helpers;
     final private IBurpExtenderCallbacks callbacks;
+
+    private byte[] compress(byte[] input) throws IOException {
+        ByteArrayOutputStream os = new ByteArrayOutputStream();
+        try (DeflaterOutputStream dos = new DeflaterOutputStream(os)) {
+            dos.write(input);
+        }
+        return os.toByteArray();
+    }
+
+    private byte[] decompress(byte[] input) throws IOException {
+        ByteArrayOutputStream os = new ByteArrayOutputStream();
+        try (OutputStream ios = new InflaterOutputStream(os)) {
+            ios.write(input);
+        }
+        return os.toByteArray();
+    }
 
     public RCMenu(IBurpExtenderCallbacks callbacks) {
         helpers = callbacks.getHelpers();
@@ -48,12 +68,18 @@ public class RCMenu implements IContextMenuFactory {
                 requestJson.put("host", service.getHost());
                 requestJson.put("port", service.getPort());
                 // Base64-encode the request to make sure it's "safe".
-                requestJson.put("request", helpers.base64Encode(request));
+                requestJson.put("request", new String(request));
                 String jsonString = requestJson.toString();
+                byte[] jsonBytes = jsonString.getBytes();
                 // Put the JSON on the clipboard as a string.
                 // Base64-encode the JSON to make sure email/IM doesn't impact the format.
                 Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-                StringSelection stringSelection = new StringSelection(helpers.base64Encode(jsonString));
+                StringSelection stringSelection = null;
+                try {
+                    stringSelection = new StringSelection(helpers.base64Encode(compress(jsonBytes)));
+                } catch (IOException ioException) {
+                    ioException.printStackTrace();
+                }
                 clipboard.setContents(stringSelection, null);
             }
 
@@ -79,7 +105,11 @@ public class RCMenu implements IContextMenuFactory {
                 }
 
                 byte[] decoded = new byte[0];
-                decoded = helpers.base64Decode(clipText);
+                try {
+                    decoded = decompress(helpers.base64Decode(clipText));
+                } catch (IOException ioException) {
+                    ioException.printStackTrace();
+                }
 
                 JSONObject jsonDecoded = new JSONObject(new String(decoded));
                 String host = jsonDecoded.getString("host");
@@ -89,7 +119,7 @@ public class RCMenu implements IContextMenuFactory {
                 if (protocol.equals("https")) {
                     useHttps=true;
                 }
-                byte[] request = helpers.base64Decode(jsonDecoded.getString("request"));
+                byte[] request = jsonDecoded.getString("request").getBytes();
                 callbacks.sendToRepeater(host,port,useHttps,request,null);
             }
 
